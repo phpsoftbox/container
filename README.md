@@ -85,6 +85,28 @@ ContainerBuilder::clearCompiledCache(__DIR__ . '/var/cache/di'); // int — ко
 `$_ENV`, `$_SERVER` и `getenv()`. Пакет `phpsoftbox/env` опционален: без него используются только
 глобальные источники.
 
+## Сброс состояния в воркерах
+
+В долгоживущем процессе (воркер очереди, HTTP-воркер) сервисы-синглтоны переживают задачу: кеши, identity map ORM,
+очереди cookie переходят в следующую. Общий хук — `ServicesResetter`: вызывайте `reset()` после каждой задачи.
+
+```php
+use PhpSoftBox\Container\Reset\ServicesResetter;
+
+$resetter = new ServicesResetter($container, [
+    // Классы из пакетов, которые не зависят от контейнера: запись → метод (или список методов).
+    ConnectionManagerInterface::class => 'clearWarmup',
+    EntityManagerInterface::class     => 'clear',
+]);
+
+$resetter->reset();
+```
+
+- Сбрасываются только уже созданные сервисы: реализующие `PhpSoftBox\Container\Reset\ResetInterface` и
+  перечисленные в карте. Ради сброса ничего не создаётся (`Container::resolvedInstances()`/`resolvedInstance()`).
+- Ошибка одного сброса не прерывает остальные; первое исключение бросается после обхода.
+- Несуществующий метод в карте — `LogicException`: ошибка конфигурации видна сразу.
+
 ## PhpStorm meta
 
 Чтобы PhpStorm выводил тип сервиса по `SomeService::class`, можно добавить в корень

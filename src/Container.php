@@ -400,6 +400,31 @@ class Container implements ContainerInterface, FactoryInterface, InvokerInterfac
         return $reflection->newInstanceArgs($arguments);
     }
 
+    /**
+     * Уже созданные сервисы (объекты) по записям контейнера. Ничего не создаёт.
+     *
+     * @return array<string, object>
+     */
+    public function resolvedInstances(): array
+    {
+        $instances = [];
+        foreach ($this->resolved as $id => $value) {
+            if (is_object($value) && $value !== $this) {
+                $instances[$id] = $value;
+            }
+        }
+
+        return $instances;
+    }
+
+    /**
+     * Созданный сервис записи или `null`, если он ещё не создавался. Ничего не создаёт.
+     */
+    public function resolvedInstance(string $id): mixed
+    {
+        return $this->resolved[$id] ?? null;
+    }
+
     public function autowiringEnabled(): bool
     {
         return $this->autowiring;
