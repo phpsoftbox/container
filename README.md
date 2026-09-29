@@ -19,7 +19,7 @@
 
 ## Требования
 
-- PHP `^8.4` (фактически lazy использует API PHP 8.5 Reflection)
+- PHP `^8.5` (lazy-объекты используют API Reflection PHP 8.5)
 - `psr/container:^2.0`
 
 ## Quick Start
