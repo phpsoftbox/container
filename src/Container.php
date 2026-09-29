@@ -851,10 +851,7 @@ class Container implements ContainerInterface, FactoryInterface, InvokerInterfac
             return new FactoryDefinition($value);
         }
 
-        if (is_string($value) && str_contains($value, '{')) {
-            return new StringDefinition($value);
-        }
-
+        // Строки с {entry} интерполируются только через явный string(): обычная строка — это значение как есть.
         return new ValueDefinition($value);
     }
 
@@ -1004,24 +1001,35 @@ class Container implements ContainerInterface, FactoryInterface, InvokerInterfac
             throw new ContainerException('Compiled factory entry not found: ' . $id);
         }
 
-        $callable = $this->resolveCallableFactory($definition->factory());
+        return $definition->resolve($this, $id, $parameters);
+    }
 
-        try {
-            return $this->call(
-                $callable,
-                [
-                    ...$parameters,
-                    'requestedEntry' => new RequestedEntry($id),
-                    'container'      => $this,
-                ],
-            );
-        } catch (Throwable $exception) {
+    /**
+     * Резолвит параметр конструктора, который AOT-генератор не может вычислить статически
+     * (union/intersection-типы, wildcard-определения, обёрнутый контейнер, значения по умолчанию-объекты).
+     * Использует тот же порядок, что и runtime-путь instantiate(), поэтому результат AOT и runtime совпадает.
+     */
+    protected function resolveCompiledConstructorParameter(string $className, int $index): mixed
+    {
+        $parameter = $this->getClassReflection($className)->getConstructor()?->getParameters()[$index] ?? null;
+        if (!$parameter instanceof ReflectionParameter) {
             throw new ContainerException(
-                'Failed to resolve factory for entry "' . $id . '": ' . $exception->getMessage(),
-                0,
-                $exception,
+                sprintf('Compiled constructor parameter #%d not found for %s.', $index, $className),
             );
         }
+
+        $fallback = $this->resolveParameterFallbackValue($parameter);
+        if ($fallback['resolved']) {
+            return $fallback['value'];
+        }
+
+        throw new ContainerException(
+            sprintf(
+                'Unable to resolve constructor parameter "$%s" for %s.',
+                $parameter->getName(),
+                $className,
+            ),
+        );
     }
 
     /**
@@ -1316,35 +1324,35 @@ class Container implements ContainerInterface, FactoryInterface, InvokerInterfac
 
     private function reflectCallable(callable $callable): ReflectionFunctionAbstract
     {
+        // Замыкания не кешируются: ключ по spl_object_id удерживал бы каждое замыкание (и всё, что оно
+        // захватило) до конца жизни контейнера, а id после сборки мусора переиспользуется другими объектами.
+        if ($callable instanceof Closure) {
+            return new ReflectionFunction($callable);
+        }
+
+        // Рефлексия метода зависит только от класса, поэтому для [$object, 'method'] ключ — имя класса,
+        // а не конкретный экземпляр: кеш не растёт и не удерживает объекты.
         $cacheKey = null;
 
-        if (is_array($callable) && array_key_exists(0, $callable) && array_key_exists(1, $callable)) {
-            $target = $callable[0];
-            $method = $callable[1];
-
-            $cacheTarget = is_object($target)
-                ? $target::class . '#' . spl_object_id($target)
-                : (string) $target;
-
-            $cacheKey = $cacheTarget . '::' . $method;
-        } elseif (is_object($callable) && !($callable instanceof Closure)) {
+        if (is_array($callable) && isset($callable[0], $callable[1])) {
+            $target   = $callable[0];
+            $cacheKey = (is_object($target) ? $target::class : (string) $target) . '::' . (string) $callable[1];
+        } elseif (is_object($callable)) {
             $cacheKey = $callable::class . '::__invoke';
         } elseif (is_string($callable)) {
-            $cacheKey = 'function:' . $callable;
-        } elseif ($callable instanceof Closure) {
-            $cacheKey = 'closure#' . spl_object_id($callable);
+            $cacheKey = $callable;
         }
 
         if ($cacheKey !== null && array_key_exists($cacheKey, $this->callableReflectionCache)) {
             return $this->callableReflectionCache[$cacheKey];
         }
 
-        $reflection = null;
-
         if (is_array($callable) && isset($callable[0], $callable[1])) {
             $reflection = new ReflectionMethod($callable[0], (string) $callable[1]);
-        } elseif (is_object($callable) && !($callable instanceof Closure)) {
+        } elseif (is_object($callable)) {
             $reflection = new ReflectionMethod($callable, '__invoke');
+        } elseif (is_string($callable) && str_contains($callable, '::')) {
+            $reflection = ReflectionMethod::createFromMethodName($callable);
         } else {
             $reflection = new ReflectionFunction($callable);
         }
@@ -1802,10 +1810,8 @@ class Container implements ContainerInterface, FactoryInterface, InvokerInterfac
             }, $value);
         }
 
-        if (is_string($value) && str_contains($value, '{')) {
-            return $this->interpolateString($value);
-        }
-
+        // Строки передаются как есть: runtime-параметры (например, параметры маршрута из URL) не должны
+        // интерпретироваться как ссылки на записи контейнера. Интерполяция доступна только через string().
         return $value;
     }
 

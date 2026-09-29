@@ -235,16 +235,15 @@ final readonly class AotEligibilityAnalyzer
             return true;
         }
 
+        // Параметры с типом-классом и параметры с неэкспортируемым значением по умолчанию генератор
+        // компилирует либо в $this->get(), либо в делегирование runtime-резолву — оба варианта компилируемы.
         $type = $parameter->getType();
-        if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-            $className = $type->getName();
-            if (array_key_exists($className, $this->definitions) || ($this->autowiring && class_exists($className))) {
-                return true;
-            }
+        if ($type instanceof ReflectionType && AotTypeInspector::hasClassType($type)) {
+            return true;
         }
 
         if ($parameter->isDefaultValueAvailable()) {
-            return $this->isExportableValue($parameter->getDefaultValue());
+            return true;
         }
 
         return $this->parameterAllowsNull($parameter);
@@ -335,10 +334,6 @@ final readonly class AotEligibilityAnalyzer
 
         if (is_callable($value) && !$value instanceof ValueDefinition) {
             return new FactoryDefinition($value);
-        }
-
-        if (is_string($value) && str_contains($value, '{')) {
-            return new StringDefinition($value);
         }
 
         return new ValueDefinition($value);

@@ -83,7 +83,10 @@ return [
 
 ## String interpolation
 
-`string('{entry.id}')` подставляет значение entry. Literal braces можно экранировать двойными скобками:
+`string('{entry.id}')` подставляет значение entry. Интерполяция работает только через явный `string()`:
+обычная строка (`'route' => '/users/{id}'`, аргумент `create()->constructor(...)`, runtime-параметры
+`call()`/`make()`) хранится и передаётся как есть. Literal braces внутри `string()` можно экранировать
+двойными скобками:
 
 ```php
 return [
@@ -93,6 +96,17 @@ return [
 ```
 
 Поддержанные transform-ы: `trim`, `upper`, `lower`, `urlencode`, `json`.
+
+## Переменные окружения
+
+`env('NAME', $default)` ищет значение в порядке:
+
+1. `EnvStorage` из `phpsoftbox/env` — значения, загруженные из `.env`, в том числе не экспортированные
+   в глобальные переменные. Интеграция опциональная: пакет `phpsoftbox/env` не обязателен, при его
+   отсутствии шаг пропускается;
+2. `$_ENV`, затем `$_SERVER`;
+3. `getenv()`;
+4. `$default` (может быть inline-хелпером, например `get(...)`).
 
 ## Порядок применения decorators
 

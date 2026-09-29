@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PhpSoftBox\Container;
 
 use PhpSoftBox\Container\Compilation\AotContainerClassGenerator;
+use PhpSoftBox\Container\Compilation\AtomicFileWriter;
 use PhpSoftBox\Container\Compilation\BuilderFingerprint;
 use PhpSoftBox\Container\Compilation\CompiledCacheStorage;
 use PhpSoftBox\Container\Compilation\DefinitionCacheInterface;
@@ -28,7 +29,6 @@ use RuntimeException;
 use function array_key_exists;
 use function class_exists;
 use function file_exists;
-use function file_put_contents;
 use function in_array;
 use function is_array;
 use function is_object;
@@ -37,8 +37,6 @@ use function preg_replace;
 use function realpath;
 use function rtrim;
 use function sha1;
-
-use const LOCK_EX;
 
 final class ContainerBuilder
 {
@@ -131,6 +129,22 @@ final class ContainerBuilder
         $this->cacheStorage()?->clear();
 
         return $this;
+    }
+
+    /**
+     * Очищает кеш компиляции контейнера в каталоге, переданном в enableCompilation(): lazy-метаданные
+     * (container.compiled.php), сгенерированные AOT-классы CompiledContainer_*.php всех версий и оставшиеся
+     * временные файлы. Не требует сборки определений — предназначен для CLI-команды сброса кеша и деплоя.
+     * Несуществующий каталог не считается ошибкой. Возвращает количество удалённых файлов.
+     */
+    public static function clearCompiledCache(string $directory): int
+    {
+        $directory = rtrim($directory, '/');
+        if ($directory === '') {
+            throw new RuntimeException('Compilation directory cannot be empty.');
+        }
+
+        return new CompiledCacheStorage($directory)->clear();
     }
 
     public function addDefinitions(array|string $definitions): self
@@ -434,10 +448,8 @@ final class ContainerBuilder
 
         if (!class_exists($fqcn, false)) {
             if (!file_exists($file)) {
-                $code = $this->renderCompiledContainerClass($namespace, $className);
-                if (file_put_contents($file, $code, LOCK_EX) === false) {
-                    throw new RuntimeException('Failed to write compiled container class file: ' . $file);
-                }
+                // Запись через временный файл + rename: параллельный воркер не подключит недописанный класс.
+                AtomicFileWriter::write($file, $this->renderCompiledContainerClass($namespace, $className));
             }
 
             require_once $file;

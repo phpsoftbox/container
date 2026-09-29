@@ -20,7 +20,11 @@
     "require-dev": {
         "phpsoftbox/cli-app": "dev-master",
         "phpsoftbox/cs-fixer": "^1.2.1",
+        "phpsoftbox/env": "dev-master",
         "phpunit/phpunit": "^13.3"
+    },
+    "suggest": {
+        "phpsoftbox/env": "Lets the env() definition helper read values loaded from .env into EnvStorage."
     },
     "autoload": {
         "psr-4": {

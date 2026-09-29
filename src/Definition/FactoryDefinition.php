@@ -6,7 +6,9 @@ namespace PhpSoftBox\Container\Definition;
 
 use PhpSoftBox\Container\Container;
 use PhpSoftBox\Container\Exception\ContainerException;
+use PhpSoftBox\Container\Exception\NotFoundException;
 use PhpSoftBox\Container\Factory\RequestedEntry;
+use Psr\Container\NotFoundExceptionInterface;
 use Throwable;
 
 final readonly class FactoryDefinition implements DefinitionInterface
@@ -35,11 +37,15 @@ final readonly class FactoryDefinition implements DefinitionInterface
                 ],
             );
         } catch (Throwable $exception) {
-            throw new ContainerException(
-                'Failed to resolve factory for entry "' . $id . '": ' . $exception->getMessage(),
-                0,
-                $exception,
-            );
+            $message = 'Failed to resolve factory for entry "' . $id . '": ' . $exception->getMessage();
+
+            // Отсутствующая запись остаётся NotFound: вызывающий код может отличить «не найдено»
+            // от прочих ошибок фабрики, исходное исключение доступно через getPrevious().
+            if ($exception instanceof NotFoundExceptionInterface) {
+                throw new NotFoundException($message, 0, $exception);
+            }
+
+            throw new ContainerException($message, 0, $exception);
         }
     }
 }
