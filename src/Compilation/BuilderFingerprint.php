@@ -16,13 +16,25 @@ use PhpSoftBox\Container\Definition\Helper\LazyEntryHelper;
 use PhpSoftBox\Container\Definition\ObjectDefinition;
 use PhpSoftBox\Container\Definition\StringDefinition;
 use PhpSoftBox\Container\Definition\ValueDefinition;
+use ReflectionClass;
+use ReflectionException;
 use ReflectionFunction;
+use ReflectionIntersectionType;
+use ReflectionNamedType;
+use ReflectionParameter;
+use ReflectionType;
+use ReflectionUnionType;
+use Throwable;
+use UnitEnum;
 
 use function array_is_list;
+use function array_key_exists;
+use function class_exists;
 use function filemtime;
 use function filesize;
 use function get_debug_type;
 use function hash;
+use function interface_exists;
 use function is_array;
 use function is_bool;
 use function is_callable;
@@ -33,6 +45,7 @@ use function is_string;
 use function ksort;
 use function serialize;
 use function sprintf;
+use function str_contains;
 use function str_replace;
 
 use const PHP_VERSION_ID;
@@ -77,6 +90,10 @@ final class BuilderFingerprint
             'decorators'        => $this->normalizeForSignature($decorators),
             'lazy_entries'      => $this->normalizeForSignature($lazyEntries),
             'definition_files'  => $files,
+            // AOT-генератор вшивает в класс контейнера аргументы конструкторов (порядок, типы, значения
+            // по умолчанию, #[Inject]). Их изменение (например, после composer update) должно менять
+            // fingerprint, иначе будет подключён устаревший скомпилированный класс.
+            'constructors' => $this->constructorSignatures($definitions),
         ];
 
         return hash('sha256', serialize($payload));
@@ -201,11 +218,149 @@ final class BuilderFingerprint
             ];
         }
 
+        if ($value instanceof UnitEnum) {
+            return ['type' => 'enum', 'class' => $value::class, 'case' => $value->name];
+        }
+
         if (is_object($value)) {
             return ['type' => 'object', 'class' => $value::class];
         }
 
         return ['type' => 'unknown', 'debug' => get_debug_type($value)];
+    }
+
+    /**
+     * @param array<string, mixed> $definitions
+     *
+     * @return array<string, mixed>
+     */
+    private function constructorSignatures(array $definitions): array
+    {
+        $signatures = [];
+
+        foreach ($definitions as $id => $definition) {
+            $id = (string) $id;
+
+            if ($definition instanceof DefinitionHelperInterface) {
+                try {
+                    $definition = $definition->toDefinition($id);
+                } catch (Throwable) {
+                    continue;
+                }
+            }
+
+            if (!$definition instanceof ObjectDefinition) {
+                continue;
+            }
+
+            $className = $definition->className($id);
+            if (str_contains($className, '*') || array_key_exists($className, $signatures)) {
+                continue;
+            }
+
+            $signatures[$className] = $this->classSignature($className);
+        }
+
+        ksort($signatures);
+
+        return $signatures;
+    }
+
+    /**
+     * @return array<string, mixed>|string
+     */
+    private function classSignature(string $className): array|string
+    {
+        if (!class_exists($className)) {
+            return 'missing';
+        }
+
+        try {
+            $reflection = new ReflectionClass($className);
+        } catch (ReflectionException) {
+            return 'unreflectable';
+        }
+
+        $parameters = [];
+        foreach ($reflection->getConstructor()?->getParameters() ?? [] as $parameter) {
+            $parameters[] = $this->parameterSignature($parameter);
+        }
+
+        return [
+            'instantiable' => $reflection->isInstantiable(),
+            'parameters'   => $parameters,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function parameterSignature(ReflectionParameter $parameter): array
+    {
+        $type    = $parameter->getType();
+        $default = null;
+
+        if ($parameter->isDefaultValueAvailable()) {
+            try {
+                $default = $this->normalizeForSignature($parameter->getDefaultValue());
+            } catch (Throwable) {
+                $default = ['type' => 'unresolved-default'];
+            }
+        }
+
+        $attributes = [];
+        foreach ($parameter->getAttributes() as $attribute) {
+            $attributes[] = [
+                'name'      => $attribute->getName(),
+                'arguments' => $this->normalizeForSignature($attribute->getArguments()),
+            ];
+        }
+
+        return [
+            'name'        => $parameter->getName(),
+            'type'        => $type !== null ? (string) $type : null,
+            'classes'     => $type !== null ? $this->typeClassStates($type) : [],
+            'variadic'    => $parameter->isVariadic(),
+            'has_default' => $parameter->isDefaultValueAvailable(),
+            'default'     => $default,
+            'attributes'  => $attributes,
+        ];
+    }
+
+    /**
+     * Состояние классов из типа параметра: генератор выбирает $this->get() или значение по умолчанию
+     * в зависимости от того, существует ли класс и можно ли его создать.
+     *
+     * @return array<string, string>
+     */
+    private function typeClassStates(ReflectionType $type): array
+    {
+        $types = $type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType
+            ? $type->getTypes()
+            : [$type];
+        $states = [];
+
+        foreach ($types as $nestedType) {
+            if ($nestedType instanceof ReflectionIntersectionType) {
+                $states = [...$states, ...$this->typeClassStates($nestedType)];
+
+                continue;
+            }
+
+            if (!$nestedType instanceof ReflectionNamedType || $nestedType->isBuiltin()) {
+                continue;
+            }
+
+            $name          = $nestedType->getName();
+            $states[$name] = match (true) {
+                AotTypeInspector::isInstantiableClass($name) => 'instantiable',
+                class_exists($name)                          => 'class',
+                interface_exists($name)                      => 'interface',
+                default                                      => 'missing',
+            };
+        }
+
+        return $states;
     }
 
     private function callableSignature(callable $callable): string

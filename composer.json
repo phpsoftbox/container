@@ -13,15 +13,18 @@
         "sort-packages": true
     },
     "require": {
-        "php": "^8.4",
-        "phpsoftbox/profiler": "dev-master",
+        "php": "^8.5",
+        "phpsoftbox/profiler": "^1.0",
         "psr/container": "^2.0"
     },
     "require-dev": {
-        "friendsofphp/php-cs-fixer": "^3.93",
-        "phpsoftbox/cli-app": "dev-master",
-        "phpsoftbox/cs-fixer": "^1.1.0",
-        "phpunit/phpunit": "^11.2"
+        "phpsoftbox/cli-app": "^1.0",
+        "phpsoftbox/cs-fixer": "^1.2.2",
+        "phpsoftbox/env": "^1.0",
+        "phpunit/phpunit": "^13.3"
+    },
+    "suggest": {
+        "phpsoftbox/env": "Lets the env() definition helper read values loaded from .env into EnvStorage."
     },
     "autoload": {
         "psr-4": {
@@ -48,6 +51,5 @@
         "cs:fix": "vendor/bin/psb-cs-fixer fix",
         "cs:check": "vendor/bin/psb-cs-fixer check --diff"
     },
-    "minimum-stability": "dev",
     "prefer-stable": true
 }

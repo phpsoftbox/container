@@ -68,6 +68,13 @@ $service = $container->make(UserService::class); // UserService
   - static метод вызывается статически;
   - не-static метод вызывается на instance из контейнера.
 
+Строковые аргументы `call()` и `make()` передаются как есть: `{entry.id}` в них не интерполируется
+(например, параметр маршрута `x{db.password}y` из URL дойдёт до обработчика без изменений). Если
+интерполяция нужна, передайте явный `string('{entry.id}')`.
+
+Рефлексия callable кешируется только для методов и invokable-объектов (ключ — класс и метод);
+замыкания не кешируются и не удерживаются контейнером после вызова.
+
 ## `injectOn(object $instance): void`
 
 Применяет injection к уже созданному объекту:
@@ -101,7 +108,9 @@ $service = $container->make(UserService::class); // UserService
 
 ## Ошибки
 
-- `NotFoundException` — entry не найден.
+- `NotFoundException` — entry не найден. Если фабрика (`factory()` или closure) падает из-за отсутствующей
+  записи, контейнер бросает `NotFoundException` с контекстом entry фабрики, исходное исключение доступно
+  через `getPrevious()`. Чтобы отличить «нет самой записи» от «нет её зависимости», проверьте `has($id)`.
 - `ContainerException` — ошибки резолва/инъекций/типов/циклов.
 
 ## Cycle detection

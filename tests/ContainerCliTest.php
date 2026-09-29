@@ -6,21 +6,19 @@ namespace PhpSoftBox\Container\Tests;
 
 use PhpSoftBox\CliApp\Command\HandlerInterface;
 use PhpSoftBox\CliApp\Command\InMemoryCommandRegistry;
-use PhpSoftBox\CliApp\Io\IoInterface;
-use PhpSoftBox\CliApp\Io\ProgressInterface;
 use PhpSoftBox\CliApp\Request\Request;
 use PhpSoftBox\CliApp\Response;
-use PhpSoftBox\CliApp\Runner\RunnerInterface;
 use PhpSoftBox\Container\Cli\AotHandler;
 use PhpSoftBox\Container\Cli\ContainerCommandProvider;
 use PhpSoftBox\Container\Cli\GraphHandler;
 use PhpSoftBox\Container\Cli\ValidateHandler;
 use PhpSoftBox\Container\Container;
+use PhpSoftBox\Container\Tests\Fixture\RecordingIo;
 use PhpSoftBox\Container\Tests\Fixture\ServiceWithDependency;
 use PhpSoftBox\Container\Tests\Fixture\SimpleDependency;
+use PhpSoftBox\Container\Tests\Fixture\StubRunner;
 use PHPUnit\Framework\TestCase;
 
-use function implode;
 use function PhpSoftBox\Container\autowire;
 use function PhpSoftBox\Container\get;
 
@@ -114,85 +112,5 @@ final class ContainerCliTest extends TestCase
             $response instanceof Response ? $response->code : $response,
             $io->output(),
         ];
-    }
-}
-
-final class RecordingIo implements IoInterface
-{
-    /** @var list<string> */
-    private array $lines = [];
-
-    public function ask(string $question, ?string $default = null): string
-    {
-        return $default ?? '';
-    }
-
-    public function confirm(string $question, bool $default = false): bool
-    {
-        return $default;
-    }
-
-    public function secret(string $question): string
-    {
-        return '';
-    }
-
-    public function writeln(string $message, string $style = 'info'): void
-    {
-        $this->lines[] = $message;
-    }
-
-    public function table(array $headers, array $rows): void
-    {
-    }
-
-    public function progress(int $max): ProgressInterface
-    {
-        return new RecordingProgress();
-    }
-
-    public function output(): string
-    {
-        return implode("\n", $this->lines);
-    }
-}
-
-final class RecordingProgress implements ProgressInterface
-{
-    public function advance(int $step = 1): void
-    {
-    }
-
-    public function finish(): void
-    {
-    }
-}
-
-final readonly class StubRunner implements RunnerInterface
-{
-    public function __construct(
-        private Request $request,
-        private IoInterface $io,
-    ) {
-    }
-
-    public function run(string $command, array $argv): Response
-    {
-        return new Response();
-    }
-
-    public function runSubCommand(string $command, array $argv): Response
-    {
-        return new Response();
-    }
-
-    public function request(): Request
-    {
-        return $this->request;
-    }
-
-    public function io(): IoInterface
-    {
-        return $this->io;
     }
 }

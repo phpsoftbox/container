@@ -19,7 +19,7 @@
 
 ## Требования
 
-- PHP `^8.4` (фактически lazy использует API PHP 8.5 Reflection)
+- PHP `^8.5` (lazy-объекты используют API Reflection PHP 8.5)
 - `psr/container:^2.0`
 
 ## Quick Start
@@ -63,6 +63,49 @@ $container = $builder->warmup();
 ```
 
 `warmup([], false)` прогревает wiring без инициализации lazy-объектов.
+
+Файлы кеша пишутся атомарно (tmp + `rename()`), fingerprint учитывает сигнатуры конструкторов, вшитые
+в AOT-класс, поэтому после `composer update` устаревший класс не подключается.
+
+Сброс кеша компиляции по каталогу (без сборки определений) — для CLI-команды и шага деплоя:
+
+```php
+ContainerBuilder::clearCompiledCache(__DIR__ . '/var/cache/di'); // int — количество удалённых файлов
+```
+
+## Интерполяция строк
+
+`{entry.id}` подставляется только в явном `string('...')`. Обычные строки в определениях и строковые
+аргументы `call()`/`make()` (например, параметры маршрута из URL) передаются как есть — пользовательский
+ввод не может прочитать значения контейнера.
+
+## Переменные окружения
+
+`env('NAME', $default)` сначала читает `EnvStorage` из `phpsoftbox/env` (значения из `.env`), затем
+`$_ENV`, `$_SERVER` и `getenv()`. Пакет `phpsoftbox/env` опционален: без него используются только
+глобальные источники.
+
+## Сброс состояния в воркерах
+
+В долгоживущем процессе (воркер очереди, HTTP-воркер) сервисы-синглтоны переживают задачу: кеши, identity map ORM,
+очереди cookie переходят в следующую. Общий хук — `ServicesResetter`: вызывайте `reset()` после каждой задачи.
+
+```php
+use PhpSoftBox\Container\Reset\ServicesResetter;
+
+$resetter = new ServicesResetter($container, [
+    // Классы из пакетов, которые не зависят от контейнера: запись → метод (или список методов).
+    ConnectionManagerInterface::class => 'clearWarmup',
+    EntityManagerInterface::class     => 'clear',
+]);
+
+$resetter->reset();
+```
+
+- Сбрасываются только уже созданные сервисы: реализующие `PhpSoftBox\Container\Reset\ResetInterface` и
+  перечисленные в карте. Ради сброса ничего не создаётся (`Container::resolvedInstances()`/`resolvedInstance()`).
+- Ошибка одного сброса не прерывает остальные; первое исключение бросается после обхода.
+- Несуществующий метод в карте — `LogicException`: ошибка конфигурации видна сразу.
 
 ## PhpStorm meta
 

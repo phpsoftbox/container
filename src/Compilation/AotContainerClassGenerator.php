@@ -13,6 +13,7 @@ use PhpSoftBox\Container\Definition\Helper\DefinitionHelperInterface;
 use PhpSoftBox\Container\Definition\ObjectDefinition;
 use PhpSoftBox\Container\Definition\StringDefinition;
 use PhpSoftBox\Container\Definition\ValueDefinition;
+use PhpSoftBox\Container\Factory\RequestedEntry;
 use ReflectionAttribute;
 use ReflectionClass;
 use ReflectionException;
@@ -32,7 +33,6 @@ use function is_int;
 use function is_null;
 use function is_string;
 use function ltrim;
-use function str_contains;
 use function substr;
 use function var_export;
 
@@ -352,7 +352,7 @@ PHP;
                 continue;
             }
 
-            $expression = $this->compileParameterFallbackExpression($parameter, $index);
+            $expression = $this->compileParameterFallbackExpression($reflection->getName(), $parameter, $index);
             if ($expression === null) {
                 return null;
             }
@@ -363,23 +363,41 @@ PHP;
         return $arguments;
     }
 
-    private function compileParameterFallbackExpression(ReflectionParameter $parameter, int $index): ?string
-    {
+    /**
+     * Порядок совпадает с Container::resolveParameterFallbackValue(): #[Inject], тип-класс, значение
+     * по умолчанию, null. Статически компилируются только однозначные случаи; если результат зависит
+     * от runtime (wildcard, обёрнутый контейнер, union/intersection, RequestedEntry, default-объект),
+     * параметр резолвится через Container::resolveCompiledConstructorParameter() — той же логикой, что и runtime.
+     */
+    private function compileParameterFallbackExpression(
+        string $className,
+        ReflectionParameter $parameter,
+        int $index,
+    ): ?string {
         $attributeExpression = $this->compileInjectAttributeExpression($parameter, $index);
         if ($attributeExpression !== null) {
             return $attributeExpression;
         }
 
+        $runtimeExpression = '$this->resolveCompiledConstructorParameter('
+            . var_export($className, true) . ', ' . $index . ')';
+
         $type = $parameter->getType();
         if ($type instanceof ReflectionNamedType && !$type->isBuiltin()) {
-            $className = $type->getName();
-            if (array_key_exists($className, $this->definitions) || ($this->autowiring && class_exists($className))) {
-                return '$this->get(' . var_export($className, true) . ')';
+            $typeName = $type->getName();
+            if ($typeName !== RequestedEntry::class
+                && (array_key_exists($typeName, $this->definitions) || $this->isAutowirableClass($typeName))
+            ) {
+                return '$this->get(' . var_export($typeName, true) . ')';
             }
         }
 
+        if ($type instanceof ReflectionType && AotTypeInspector::hasClassType($type)) {
+            return $runtimeExpression;
+        }
+
         if ($parameter->isDefaultValueAvailable()) {
-            return $this->compileValueExpression($parameter->getDefaultValue());
+            return $this->compileValueExpression($parameter->getDefaultValue()) ?? $runtimeExpression;
         }
 
         if ($this->parameterAllowsNull($parameter)) {
@@ -387,6 +405,11 @@ PHP;
         }
 
         return null;
+    }
+
+    private function isAutowirableClass(string $className): bool
+    {
+        return $this->autowiring && AotTypeInspector::isInstantiableClass($className);
     }
 
     private function compileInjectAttributeExpression(ReflectionParameter $parameter, int $index): ?string
@@ -515,10 +538,6 @@ PHP;
 
         if (is_callable($value) && !$value instanceof ValueDefinition) {
             return new FactoryDefinition($value);
-        }
-
-        if (is_string($value) && str_contains($value, '{')) {
-            return new StringDefinition($value);
         }
 
         return new ValueDefinition($value);

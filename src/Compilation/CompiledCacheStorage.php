@@ -7,25 +7,24 @@ namespace PhpSoftBox\Container\Compilation;
 use RuntimeException;
 use Throwable;
 
-use function dirname;
 use function file_exists;
-use function file_put_contents;
+use function filemtime;
 use function glob;
 use function is_array;
 use function is_dir;
+use function is_file;
 use function is_string;
 use function mkdir;
-use function rename;
-use function tempnam;
+use function time;
 use function unlink;
 use function var_export;
-
-use const LOCK_EX;
 
 final class CompiledCacheStorage
 {
     public const SCHEMA   = 1;
     public const FILENAME = 'container.compiled.php';
+
+    private const STALE_TEMP_FILE_TTL = 60;
 
     public function __construct(
         private readonly string $directory,
@@ -92,39 +91,42 @@ final class CompiledCacheStorage
             'lazyClassMetadata' => $lazyClassMetadata,
         ];
 
-        $export    = "<?php\n\ndeclare(strict_types=1);\n\nreturn " . var_export($payload, true) . ";\n";
-        $cacheFile = $this->cacheFile();
-        $tmpFile   = tempnam(dirname($cacheFile), 'container_cache_');
-        if ($tmpFile === false) {
-            throw new RuntimeException('Failed to create temporary cache file in: ' . dirname($cacheFile));
-        }
+        $export = "<?php\n\ndeclare(strict_types=1);\n\nreturn " . var_export($payload, true) . ";\n";
 
-        try {
-            if (file_put_contents($tmpFile, $export, LOCK_EX) === false) {
-                throw new RuntimeException('Failed to write compiled container cache file: ' . $cacheFile);
-            }
-
-            if (!rename($tmpFile, $cacheFile)) {
-                throw new RuntimeException('Failed to move compiled cache into place: ' . $cacheFile);
-            }
-        } catch (Throwable $exception) {
-            @unlink($tmpFile);
-
-            throw $exception;
-        }
+        AtomicFileWriter::write($this->cacheFile(), $export);
     }
 
-    public function clear(): void
+    /**
+     * Удаляет все файлы кеша компиляции в каталоге: lazy-метаданные, сгенерированные классы контейнера
+     * (всех fingerprint-ов) и оставшиеся временные файлы. Возвращает количество удалённых файлов.
+     */
+    public function clear(): int
     {
         if (!is_dir($this->directory)) {
-            return;
+            return 0;
         }
 
-        @unlink($this->cacheFile());
+        $files = [
+            $this->cacheFile(),
+            ...(glob($this->directory . '/CompiledContainer_*.php') ?: []),
+        ];
 
-        foreach (glob($this->directory . '/CompiledContainer_*.php') ?: [] as $file) {
-            @unlink($file);
+        // Свежие временные файлы могут принадлежать воркеру, который прямо сейчас пишет кеш:
+        // удаляем только заведомо брошенные.
+        foreach (glob($this->directory . '/' . AtomicFileWriter::TEMP_PREFIX . '*') ?: [] as $tmpFile) {
+            if ((int) @filemtime($tmpFile) < time() - self::STALE_TEMP_FILE_TTL) {
+                $files[] = $tmpFile;
+            }
         }
+
+        $removed = 0;
+        foreach ($files as $file) {
+            if (is_file($file) && @unlink($file)) {
+                $removed++;
+            }
+        }
+
+        return $removed;
     }
 
     private function cacheFile(): string
