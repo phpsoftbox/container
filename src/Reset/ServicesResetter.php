@@ -45,7 +45,8 @@ final readonly class ServicesResetter implements ResetInterface
             }
 
             $done[$key] = true;
-            $first ??= $this->call(static fn () => $instance->reset());
+            $error      = $this->call(static fn () => $instance->reset());
+            $first ??= $error;
         }
 
         foreach ($this->hooks as $id => $methods) {
@@ -56,10 +57,12 @@ final readonly class ServicesResetter implements ResetInterface
 
             foreach ((array) $methods as $method) {
                 if (!method_exists($instance, $method)) {
-                    throw new LogicException('Reset hook method ' . $instance::class . '::' . $method . '() does not exist.');
+                    $first ??= new LogicException('Reset hook method ' . $instance::class . '::' . $method . '() does not exist.');
+                    continue;
                 }
 
-                $first ??= $this->call(static fn () => $instance->{$method}());
+                $error = $this->call(static fn () => $instance->{$method}());
+                $first ??= $error;
             }
         }
 

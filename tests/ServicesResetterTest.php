@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace PhpSoftBox\Container\Tests;
 
+use LogicException;
 use PhpSoftBox\Container\Container;
 use PhpSoftBox\Container\Reset\ServicesResetter;
 use PhpSoftBox\Container\Tests\Fixture\Reset\CountingResettable;
@@ -55,19 +56,86 @@ final class ServicesResetterTest extends TestCase
     {
         $container = new Container([
             'failing'                 => factory(static fn (): WarmupCache => new WarmupCache(fail: true)),
+            'following'               => factory(static fn (): WarmupCache => new WarmupCache()),
             CountingResettable::class => factory(static fn (): CountingResettable => new CountingResettable()),
         ]);
 
         $container->get('failing');
+        $following  = $container->get('following');
         $resettable = $container->get(CountingResettable::class);
 
         try {
-            new ServicesResetter($container, ['failing' => 'clearWarmup'])->reset();
+            new ServicesResetter($container, [
+                'failing'   => 'clearWarmup',
+                'following' => 'clearWarmup',
+            ])->reset();
             self::fail('Exception expected.');
         } catch (RuntimeException $exception) {
             self::assertSame('Warmup reset failed.', $exception->getMessage());
         }
 
         self::assertSame(1, $resettable->resets);
+        self::assertSame(1, $following->clears);
+    }
+
+    /**
+     * Проверим, что несуществующий метод сохраняет ошибку, но не прерывает следующие хуки того же и других сервисов.
+     *
+     * @see ServicesResetter::reset()
+     */
+    #[Test]
+    public function continuesAfterMissingHookMethod(): void
+    {
+        $container = new Container([
+            'first'  => factory(static fn (): WarmupCache => new WarmupCache()),
+            'second' => factory(static fn (): WarmupCache => new WarmupCache()),
+        ]);
+
+        $first  = $container->get('first');
+        $second = $container->get('second');
+
+        try {
+            new ServicesResetter($container, [
+                'first'  => ['missing', 'clearWarmup'],
+                'second' => 'clearWarmup',
+            ])->reset();
+            self::fail('Exception expected.');
+        } catch (LogicException $exception) {
+            self::assertSame(
+                'Reset hook method ' . WarmupCache::class . '::missing() does not exist.',
+                $exception->getMessage(),
+            );
+        }
+
+        self::assertSame(1, $first->clears);
+        self::assertSame(1, $second->clears);
+    }
+
+    /**
+     * Проверим, что ошибка ResetInterface не мешает хукам, а после обхода выбрасывается первой.
+     *
+     * @see ServicesResetter::reset()
+     * @see CountingResettable::reset()
+     */
+    #[Test]
+    public function continuesAfterFailedResetInterfaceService(): void
+    {
+        $container = new Container([
+            CountingResettable::class => factory(static fn (): CountingResettable => new CountingResettable(fail: true)),
+            WarmupCache::class        => factory(static fn (): WarmupCache => new WarmupCache()),
+        ]);
+
+        $resettable = $container->get(CountingResettable::class);
+        $warmup     = $container->get(WarmupCache::class);
+
+        try {
+            new ServicesResetter($container, [WarmupCache::class => 'clearWarmup'])->reset();
+            self::fail('Exception expected.');
+        } catch (RuntimeException $exception) {
+            self::assertSame('Service reset failed.', $exception->getMessage());
+        }
+
+        self::assertSame(1, $resettable->resets);
+        self::assertSame(1, $warmup->clears);
     }
 }
